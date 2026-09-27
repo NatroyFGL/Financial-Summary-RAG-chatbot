@@ -1,0 +1,5 @@
+.env
+faiss_index/
+mlruns/
+mlflow.db
+__pycache__/
