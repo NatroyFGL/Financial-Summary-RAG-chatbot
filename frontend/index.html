@@ -1,0 +1,670 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Financial Summary RAG: ask a financial report</title>
+<meta name="description" content="Ask questions about a financial report. Answers come only from the document, cite the page they came from, and show how they were found.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Financial Summary RAG">
+<meta property="og:description" content="A retrieval-augmented chatbot that answers questions about a financial PDF with page citations: RAG-Fusion, semantic routing and an LLM router.">
+<meta name="theme-color" content="#F2F5EE">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%23F2F5EE'/%3E%3Cpath d='M4.5 12.8C6.6 14.4 8 16.2 9.4 18.7 12.4 12.7 15.6 8.6 20 5' fill='none' stroke='%23B3302A' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #F2F5EE;        /* ledger-pad green-grey */
+    --sheet: #FFFFFF;
+    --ledger: #F8FBF5;
+    --rule: #D3DFCD;
+    --rule-strong: #A9BFA2;
+    --green: #2E5A4C;        /* column heads, links */
+    --green-soft: #E3ECDF;
+    --ink: #1D2840;          /* ledger ink */
+    --ink-soft: #56607A;
+    --red: #B3302A;          /* auditor's red pencil: ticks and margin rules only */
+    --sans: "Libre Franklin", "Franklin Gothic Book", "Helvetica Neue", Arial, sans-serif;
+    --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+    --radius: 6px;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font: 400 16px/1.55 var(--sans);
+  }
+  a { color: var(--green); text-underline-offset: 3px; }
+  :focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+  .visually-hidden {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+
+  /* Header */
+  .site-header { border-bottom: 1px solid var(--rule-strong); }
+  .site-header-inner {
+    max-width: 1180px; margin: 0 auto; padding: 16px 28px;
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  }
+  .wordmark {
+    display: inline-flex; align-items: center; gap: 8px;
+    font: 700 1rem var(--sans); color: var(--ink); text-decoration: none;
+  }
+  .wordmark svg { width: 20px; height: 20px; }
+  .header-link { font: 600 .9rem var(--sans); }
+
+  /* Layout */
+  .layout {
+    max-width: 1180px; margin: 0 auto; padding: 52px 28px 72px;
+    display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 72px; align-items: start;
+  }
+  .about { position: sticky; top: 28px; }
+
+  /* Intro */
+  h1 {
+    font: 600 clamp(2.1rem, 4.2vw, 3.05rem)/1.08 var(--serif);
+    letter-spacing: -0.012em;
+    margin: 0 0 .5em;
+    max-width: 17ch;
+  }
+  .lede { font-size: 1.075rem; color: var(--ink-soft); max-width: 56ch; margin: 0 0 30px; }
+
+  /* Question box */
+  .ask {
+    background: var(--sheet);
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--radius);
+  }
+  .ask:focus-within { border-color: var(--green); box-shadow: 0 0 0 3px rgba(46, 90, 76, .16); }
+  .ask textarea {
+    display: block; width: 100%; min-height: 3.6em; max-height: 12em;
+    padding: 16px 18px 8px; border: 0; resize: none; background: transparent;
+    font: 400 1.12rem/1.5 var(--serif); color: var(--ink);
+  }
+  .ask textarea::placeholder { color: #8A93A6; }
+  .ask textarea:focus { outline: none; }
+  .ask-bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    padding: 8px 10px 10px 18px; border-top: 1px dashed var(--rule);
+  }
+  .status { margin: 0; display: flex; align-items: center; gap: 8px; font-size: .84rem; color: var(--ink-soft); }
+  .status::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--rule-strong); }
+  .status[data-state="ready"]::before { background: var(--green); }
+  .status[data-state="error"] { color: var(--red); }
+  .status[data-state="error"]::before { background: var(--red); }
+  .counter { font-size: .8rem; color: var(--ink-soft); margin-left: auto; }
+  .ask-button {
+    flex: none; font: 600 .95rem var(--sans); color: #fff; background: var(--ink);
+    border: 0; border-radius: 4px; padding: 10px 24px; cursor: pointer;
+  }
+  .ask-button:hover { background: #2C3A5C; }
+  .ask-button:disabled { opacity: .6; cursor: progress; }
+
+  /* Sample questions, set as ledger rows */
+  .samples { margin: 30px 0 0; }
+  .samples h2 { font: 600 .9rem var(--sans); color: var(--green); margin: 0 0 6px; }
+  .samples ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule-strong); }
+  .samples li { border-bottom: 1px solid var(--rule); }
+  .samples button {
+    all: unset; box-sizing: border-box; cursor: pointer;
+    display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 2px 16px;
+    width: 100%; padding: 10px 8px;
+    font: 400 1.02rem/1.4 var(--serif); color: var(--ink);
+  }
+  .samples button:hover { background: var(--green-soft); }
+  .samples button:focus-visible { outline: 2px solid var(--green); outline-offset: -2px; }
+  .samples button:disabled { cursor: progress; opacity: .6; }
+  .samples .tag { font: 500 .8rem var(--sans); color: var(--red); }
+
+  /* Answers */
+  .answers { margin-top: 44px; display: grid; gap: 48px; }
+  .answers:empty { display: none; }
+  .entry-question { font: 600 1.06rem/1.4 var(--sans); margin: 0 0 12px; overflow-wrap: anywhere; }
+  .sheet {
+    position: relative;
+    background: var(--sheet);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 20px 26px 20px 46px;
+  }
+  .sheet::before {   /* the red double margin rule of ledger paper */
+    content: ""; position: absolute; top: 0; bottom: 0; left: 20px; width: 4px;
+    border-left: 1px solid var(--red); border-right: 1px solid var(--red); opacity: .75;
+  }
+  .answer { font: 400 1.09rem/1.62 var(--serif); max-width: 68ch; overflow-wrap: anywhere; }
+  .answer p { margin: 0 0 .8em; }
+  .answer p:last-child, .answer ol:last-child, .answer ul:last-child { margin-bottom: 0; }
+  .answer ol, .answer ul { margin: 0 0 .8em; padding-left: 1.3em; }
+  .answer li { margin: .3em 0; }
+  .answer .waiting { color: var(--ink-soft); font-style: italic; }
+  .cite {
+    font: 600 .74em var(--sans); color: var(--green); background: var(--green-soft);
+    border-radius: 3px; padding: .12em .4em; text-decoration: none; white-space: nowrap;
+    vertical-align: .08em;
+  }
+  a.cite:hover { background: #D2E1CC; }
+  .declined { margin: 14px 0 0; font: 500 .88rem/1.45 var(--sans); color: var(--ink-soft); max-width: 60ch; }
+  .error { font: 500 .98rem/1.5 var(--sans); color: var(--red); margin: 0; }
+  .retry {
+    margin-top: 10px; font: 600 .88rem var(--sans); color: var(--ink); background: var(--sheet);
+    border: 1px solid var(--rule-strong); border-radius: 4px; padding: 6px 14px; cursor: pointer;
+  }
+
+  /* "How this answer was found": an auditor's working paper */
+  .trail { margin-top: 14px; }
+  .trail summary {
+    display: inline-flex; align-items: center; gap: 9px; cursor: pointer; list-style: none;
+    font: 600 .9rem var(--sans); color: var(--green); padding: 4px 0 8px;
+  }
+  .trail summary::-webkit-details-marker { display: none; }
+  .trail summary::before {
+    content: ""; width: 6px; height: 6px; margin-top: -2px;
+    border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
+    transform: rotate(-45deg); transition: transform .15s;
+  }
+  .trail[open] summary::before { transform: rotate(45deg); }
+  .ledger {
+    width: 100%; border-collapse: collapse; table-layout: fixed;
+    background: var(--ledger); border: 1px solid var(--rule-strong); font-size: .9rem;
+  }
+  .ledger th, .ledger td {
+    padding: 10px 12px; text-align: left; vertical-align: top;
+    border-bottom: 1px solid var(--rule); border-left: 1px solid var(--rule);
+  }
+  .ledger thead th {
+    font: 600 .78rem var(--sans); color: var(--green);
+    padding: 7px 12px; border-bottom: 2px solid var(--rule-strong);
+  }
+  .ledger tbody tr:last-child > * { border-bottom: 0; }
+  .ledger .col-tick { width: 38px; }
+  .ledger .col-step { width: 8.6em; }
+  .ledger .col-num { width: 6.2em; }
+  .ledger .tick { border-left: 0; padding: 8px 0 0; text-align: center; }
+  .ledger tbody th { font-weight: 600; }
+  .ledger .num {
+    border-left: 3px double var(--rule-strong);
+    text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  .ledger .detail { overflow-wrap: anywhere; }
+  .ledger .detail p { margin: 0; }
+  .ledger .pending { color: var(--ink-soft); }
+  .tick-mark {
+    width: 21px; height: 21px; fill: none; stroke: var(--red); stroke-width: 2.5;
+    stroke-linecap: round; stroke-linejoin: round;
+    stroke-dasharray: 1; stroke-dashoffset: 1;
+  }
+  tr.done .tick-mark { animation: draw .32s ease-out forwards; animation-delay: calc(var(--i) * 150ms); }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+
+  .queries { margin: 6px 0 0; padding-left: 1.1em; color: var(--ink-soft); }
+  .queries li { margin: 3px 0; }
+  .passage {
+    margin: 8px 0 0; padding: 10px 12px; scroll-margin-top: 24px;
+    background: var(--sheet); border: 1px solid var(--rule); border-radius: 4px;
+  }
+  .passage.flash { outline: 2px solid var(--red); outline-offset: 2px; }
+  .passage figcaption {
+    display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px;
+    font: 600 .8rem var(--sans); color: var(--ink);
+  }
+  .passage .score { font-weight: 500; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+  .passage blockquote {
+    margin: 6px 0 0; font: 400 .92rem/1.5 var(--serif);
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .passage.expanded blockquote { display: block; }
+  .more {
+    margin-top: 4px; padding: 0; border: 0; background: none; cursor: pointer;
+    font: 600 .8rem var(--sans); color: var(--green); text-decoration: underline; text-underline-offset: 3px;
+  }
+  .bars {
+    display: grid; grid-template-columns: auto minmax(60px, 1fr) auto; gap: 6px 10px; align-items: center;
+    max-width: 380px; margin-top: 9px;
+  }
+  .bar-row { display: contents; }
+  .bar-label { font: 500 .8rem var(--sans); color: var(--ink-soft); }
+  .bar-track { height: 8px; background: var(--green-soft); border-radius: 2px; overflow: hidden; }
+  .bar-fill { height: 100%; background: var(--rule-strong); }
+  .bar-row.win .bar-fill { background: var(--green); }
+  .bar-row.win .bar-label { color: var(--ink); font-weight: 600; }
+  .bar-value { font: 600 .8rem var(--sans); font-variant-numeric: tabular-nums; }
+  .bars-caption { margin: 5px 0 0; font-size: .78rem; color: var(--ink-soft); }
+
+  /* Sidebar */
+  .about { font-size: .93rem; }
+  .about section { padding-bottom: 22px; margin-bottom: 22px; border-bottom: 1px solid var(--rule-strong); }
+  .about section:last-child { border-bottom: 0; margin-bottom: 0; }
+  .about h2 { font: 600 .92rem var(--sans); color: var(--green); margin: 0 0 10px; }
+  .doc-title { font: 600 1.1rem/1.35 var(--serif); margin: 0 0 6px; }
+  .doc-meta { margin: 0 0 10px; color: var(--ink-soft); font-size: .88rem; }
+  .about a { font-weight: 600; }
+  .steps { list-style: none; counter-reset: step; margin: 0; padding: 0; }
+  .steps li {
+    counter-increment: step;
+    display: grid; grid-template-columns: 22px 1fr; gap: 8px;
+    padding: 9px 0; border-top: 1px solid var(--rule); line-height: 1.45;
+  }
+  .steps li::before { content: counter(step); font: 700 .85rem/1.6 var(--sans); color: var(--green); }
+  .steps strong { font-weight: 600; }
+  .note { margin: 12px 0 0; color: var(--ink-soft); font-size: .86rem; }
+  .stack { margin: 0; }
+
+  /* Footer */
+  .site-footer { border-top: 1px solid var(--rule-strong); }
+  .site-footer-inner {
+    max-width: 1180px; margin: 0 auto; padding: 18px 28px 30px;
+    display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px;
+    font-size: .84rem; color: var(--ink-soft);
+  }
+  .site-footer p { margin: 0; }
+
+  @media (max-width: 960px) {
+    .layout { grid-template-columns: 1fr; gap: 56px; padding-top: 36px; }
+    .about { position: static; }
+  }
+  @media (max-width: 600px) {
+    .site-header-inner, .layout, .site-footer-inner { padding-left: 18px; padding-right: 18px; }
+    .sheet { padding: 16px 16px 16px 34px; }
+    .sheet::before { left: 12px; }
+    .ledger, .ledger tbody { display: block; }
+    .ledger thead { display: none; }
+    .ledger tr {
+      display: grid; grid-template-columns: 30px 1fr auto; grid-template-areas: "tick step num" "detail detail detail";
+      border-bottom: 1px solid var(--rule);
+    }
+    .ledger tbody tr:last-child { border-bottom: 0; }
+    .ledger th, .ledger td { border: 0; padding: 8px 10px; }
+    .ledger .tick { grid-area: tick; padding: 6px 0 0 6px; }
+    .ledger tbody th { grid-area: step; }
+    .ledger .num { grid-area: num; border: 0; }
+    .ledger .detail { grid-area: detail; padding-top: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    tr.done .tick-mark { animation: none; stroke-dashoffset: 0; }
+    .trail summary::before { transition: none; }
+  }
+</style>
+</head>
+<body>
+<header class="site-header">
+  <div class="site-header-inner">
+    <a class="wordmark" href="/">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12.8C6.6 14.4 8 16.2 9.4 18.7 12.4 12.7 15.6 8.6 20 5" fill="none" stroke="#B3302A" stroke-width="2.6" stroke-linecap="round"/></svg>
+      Financial Summary RAG
+    </a>
+    <a class="header-link" href="https://github.com/NatroyFGL/Financial-Summary-RAG-chatbot">Code on GitHub</a>
+  </div>
+</header>
+
+<div class="layout">
+  <main>
+    <h1>Ask the financial report a question.</h1>
+    <p class="lede">Answers come only from the document and cite the page they were found on. If the report doesn't say, the assistant tells you instead of guessing.</p>
+
+    <form id="ask-form" class="ask" novalidate>
+      <label for="question" class="visually-hidden">Your question about the report</label>
+      <textarea id="question" name="question" rows="2" maxlength="500" autocomplete="off"
+        placeholder="What metrics are used to evaluate profitability?"></textarea>
+      <div class="ask-bar">
+        <p id="status" class="status" data-state="pending" role="status">Connecting to the server…</p>
+        <span id="counter" class="counter" hidden></span>
+        <button id="ask-button" class="ask-button" type="submit">Ask</button>
+      </div>
+    </form>
+
+    <section class="samples" aria-labelledby="samples-heading">
+      <h2 id="samples-heading">Try one of these</h2>
+      <ul>
+        <li><button type="button" data-question="What metrics are used to evaluate profitability?">What metrics are used to evaluate profitability?</button></li>
+        <li><button type="button" data-question="Summarize the main takeaways of this paper">Summarize the main takeaways of this paper</button></li>
+        <li><button type="button" data-question="Who are financial summaries useful for?">Who are financial summaries useful for?</button></li>
+        <li><button type="button" data-question="What was the company's total revenue last year?"><span>What was the company's total revenue last year?</span><span class="tag">Not in the report: checks it won't guess</span></button></li>
+      </ul>
+    </section>
+
+    <section id="answers" class="answers" aria-live="polite" aria-label="Answers"></section>
+  </main>
+
+  <aside class="about">
+    <section>
+      <h2>The document</h2>
+      <p class="doc-title">Financial Summary Analysis of Corporate Performance and Profitability</p>
+      <p class="doc-meta" id="doc-meta">One-page PDF covering revenue growth, profitability, liquidity and efficiency metrics.</p>
+      <a href="https://github.com/NatroyFGL/Financial-Summary-RAG-chatbot/blob/main/papers/Financial_Summary_Paper_1_Corporate_Performance.pdf">Open the PDF</a>
+    </section>
+    <section>
+      <h2>How an answer is made</h2>
+      <ol class="steps">
+        <li><span><strong>Rewrite.</strong> GPT-4o-mini turns your question into four search queries (RAG-Fusion).</span></li>
+        <li><span><strong>Search.</strong> Each query searches a FAISS index of the PDF embedded with text-embedding-3-large. The four result lists are merged with Reciprocal Rank Fusion.</span></li>
+        <li><span><strong>Route.</strong> The question is compared with two personas: an analyst for exact figures (METRICS) or an advisor for plain-language summaries (SUMMARY).</span></li>
+        <li><span><strong>Pick a model.</strong> Figures go to GPT-4o-mini. Summaries go to the open-source Qwen2.5-7B on Hugging Face, with GPT-4o-mini as an automatic fallback.</span></li>
+        <li><span><strong>Answer.</strong> The model may only use the retrieved passages and must cite the page, or reply that it doesn't know.</span></li>
+      </ol>
+      <p class="note">The command-line version also logs each run's settings, route, model and answer to MLflow.</p>
+    </section>
+    <section>
+      <h2>Built with</h2>
+      <p class="stack">Python, LangChain, FAISS, OpenAI, Hugging Face, MLflow, FastAPI and Vercel.</p>
+    </section>
+  </aside>
+</div>
+
+<footer class="site-footer">
+  <div class="site-footer-inner">
+    <p>This public demo has a per-visitor question limit.</p>
+    <p>Source code: <a href="https://github.com/NatroyFGL/Financial-Summary-RAG-chatbot">NatroyFGL/Financial-Summary-RAG-chatbot</a></p>
+  </div>
+</footer>
+
+<template id="entry-template">
+  <article class="entry">
+    <h3 class="entry-question"></h3>
+    <div class="sheet">
+      <div class="answer"><p class="waiting">Reading the report…</p></div>
+    </div>
+    <details class="trail" open>
+      <summary>How this answer was found</summary>
+      <table class="ledger">
+        <colgroup><col class="col-tick"><col class="col-step"><col><col class="col-num"></colgroup>
+        <thead>
+          <tr><th scope="col"><span class="visually-hidden">Done</span></th><th scope="col">Step</th><th scope="col">What happened</th><th scope="col" class="num">Figure</th></tr>
+        </thead>
+        <tbody>
+          <tr data-step="queries" style="--i:0"><td class="tick"></td><th scope="row">Search queries</th><td class="detail pending">Rewriting your question…</td><td class="num"></td></tr>
+          <tr data-step="passages" style="--i:1"><td class="tick"></td><th scope="row">Passages</th><td class="detail pending">Searching the report…</td><td class="num"></td></tr>
+          <tr data-step="route" style="--i:2"><td class="tick"></td><th scope="row">Route</th><td class="detail pending">Choosing a persona…</td><td class="num"></td></tr>
+          <tr data-step="model" style="--i:3"><td class="tick"></td><th scope="row">Model</th><td class="detail pending">Writing the answer…</td><td class="num"></td></tr>
+        </tbody>
+      </table>
+    </details>
+  </article>
+</template>
+
+<script>
+(() => {
+  const form = document.getElementById('ask-form');
+  const input = document.getElementById('question');
+  const button = document.getElementById('ask-button');
+  const statusEl = document.getElementById('status');
+  const counter = document.getElementById('counter');
+  const answers = document.getElementById('answers');
+  const template = document.getElementById('entry-template');
+  const sampleButtons = document.querySelectorAll('.samples button');
+  const MAX_CHARS = 500;
+  const TICK = '<svg class="tick-mark" viewBox="0 0 24 24" aria-hidden="true"><path pathLength="1" d="M4.5 12.8C6.6 14.4 8 16.2 9.4 18.7 12.4 12.7 15.6 8.6 20 5"/></svg>';
+  const DECLINED = /I don['’]t know based on the provided documents/i;
+  const PERSONAS = {
+    METRICS: { label: 'Figures', long: 'an analyst for exact figures' },
+    SUMMARY: { label: 'Summary', long: 'an advisor for plain-language summaries' },
+  };
+  let busy = false;
+  let entryCount = 0;
+
+  const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+  const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function setStatus(state, text) {
+    statusEl.dataset.state = state;
+    statusEl.textContent = text;
+  }
+
+  // Warm up the server while the visitor reads, and show whether the demo can answer
+  async function checkHealth() {
+    const slow = setTimeout(() => setStatus('pending', 'Waking the server up. The first answer can take a few extra seconds.'), 2500);
+    try {
+      const res = await fetch('/api/health', { cache: 'no-store' });
+      const data = await res.json();
+      if (data.ok) {
+        setStatus('ready', 'Ready');
+        const index = data.index || [];
+        const chunks = index.reduce((sum, item) => sum + item.chunks, 0);
+        if (index.length) {
+          document.getElementById('doc-meta').textContent =
+            `One-page PDF, indexed as ${chunks} ${chunks === 1 ? 'passage' : 'passages'} for search.`;
+        }
+      } else {
+        setStatus('error', data.error || 'The demo is not available right now.');
+      }
+    } catch (err) {
+      setStatus('error', "Can't reach the server. Refresh the page to try again.");
+    } finally {
+      clearTimeout(slow);
+    }
+  }
+
+  // Citation tags like (Financial_Summary_Paper_1.pdf:1) become links to the matching passage
+  function inline(text, sources, entryId) {
+    let html = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\(?\[?([\w\-. ]+?\.pdf):(\d+)\]?\)?/gi, (match, file, page) => {
+      const index = sources.findIndex((s) => s.file === file.trim() && String(s.page) === page);
+      const title = escapeHtml(`${file.trim()}, page ${page}`);
+      if (index === -1) return `<span class="cite" title="${title}">p.&nbsp;${page}</span>`;
+      return `<a class="cite" href="#${entryId}-src-${index}" data-source="${index}" title="${title}">p.&nbsp;${page}</a>`;
+    });
+    return html;
+  }
+
+  // Small, safe Markdown subset: paragraphs, lists, headings and bold. Everything is escaped first.
+  function renderAnswer(text, sources, entryId) {
+    const lines = escapeHtml(text.trim()).split('\n');
+    let html = '';
+    let list = null;
+    let paragraph = [];
+    const flush = () => { if (paragraph.length) { html += `<p>${paragraph.join(' ')}</p>`; paragraph = []; } };
+    const closeList = () => { if (list) { html += `</${list}>`; list = null; } };
+    for (const raw of lines) {
+      const line = raw.trim();
+      let m;
+      if (!line) { flush(); closeList(); continue; }
+      if ((m = line.match(/^\d+[.)]\s+(.*)$/))) {
+        flush(); if (list !== 'ol') { closeList(); html += '<ol>'; list = 'ol'; }
+        html += `<li>${inline(m[1], sources, entryId)}</li>`; continue;
+      }
+      if ((m = line.match(/^[-*•]\s+(.*)$/))) {
+        flush(); if (list !== 'ul') { closeList(); html += '<ul>'; list = 'ul'; }
+        html += `<li>${inline(m[1], sources, entryId)}</li>`; continue;
+      }
+      if ((m = line.match(/^#{1,6}\s+(.*)$/))) {
+        flush(); closeList(); html += `<p><strong>${inline(m[1], sources, entryId)}</strong></p>`; continue;
+      }
+      closeList();
+      paragraph.push(inline(line, sources, entryId));
+    }
+    flush(); closeList();
+    return html;
+  }
+
+  function setRow(entry, step, detailHtml, figure) {
+    const row = entry.querySelector(`tr[data-step="${step}"]`);
+    const detail = row.querySelector('.detail');
+    detail.classList.remove('pending');
+    detail.innerHTML = detailHtml;
+    row.querySelector('.num').textContent = figure;
+    row.querySelector('.tick').innerHTML = TICK;
+    row.classList.add('done');
+  }
+
+  function fillTrail(entry, data, entryId) {
+    const queries = data.queries || [];
+    setRow(entry, 'queries',
+      `<p>Rewrote the question into ${queries.length} searches.</p>` +
+      `<ul class="queries">${queries.map((q) => `<li>${escapeHtml(q)}</li>`).join('')}</ul>`,
+      String(queries.length));
+
+    const sources = data.sources || [];
+    const passages = sources.length
+      ? `<p>Found ${sources.length === 1 ? '1 relevant passage' : `${sources.length} relevant passages`}, ranked with Reciprocal Rank Fusion.</p>` +
+        sources.map((s, i) => `
+          <figure class="passage" id="${entryId}-src-${i}">
+            <figcaption><span>${escapeHtml(s.file)}, page ${s.page}</span><span class="score">fusion score ${Number(s.score).toFixed(4)}</span></figcaption>
+            <blockquote>${escapeHtml(s.text.replace(/\s+/g, ' ').trim())}</blockquote>
+            <button type="button" class="more" aria-expanded="false">Show the full passage</button>
+          </figure>`).join('')
+      : '<p>No passage was similar enough to the question (cosine similarity under 0.2), so the model had nothing to quote.</p>';
+    setRow(entry, 'passages', passages, String(sources.length));
+
+    const scores = data.route_scores || {};
+    const route = PERSONAS[data.route] || { label: data.route, long: data.route };
+    const bars = Object.entries(scores).map(([name, value]) => `
+      <div class="bar-row${name === data.route ? ' win' : ''}">
+        <span class="bar-label">${escapeHtml((PERSONAS[name] || { label: name }).label)}</span>
+        <span class="bar-track"><span class="bar-fill" style="display:block;width:${Math.max(0, Math.min(1, value)) * 100}%"></span></span>
+        <span class="bar-value">${Number(value).toFixed(2)}</span>
+      </div>`).join('');
+    setRow(entry, 'route',
+      `<p>Closest persona: ${route.long} (${escapeHtml(data.route)}).</p>` +
+      `<div class="bars" role="img" aria-label="Similarity of the question to each persona">${bars}</div>` +
+      '<p class="bars-caption">Cosine similarity between the question and each persona, 0 to 1.</p>',
+      scores[data.route] !== undefined ? Number(scores[data.route]).toFixed(2) : '');
+
+    const answered = escapeHtml(data.answer_model);
+    const planned = escapeHtml(String(data.planned_model).split('/').pop());
+    const modelText = data.fallback
+      ? `<p>${planned} on Hugging Face wasn't available, so <strong>${answered}</strong> answered instead (automatic fallback).</p>`
+      : `<p>Answered by <strong>${answered}</strong>${data.route === 'SUMMARY' ? ', the open-source model on Hugging Face' : ''}.</p>`;
+    setRow(entry, 'model', modelText, `${Number(data.seconds).toFixed(1)} s`);
+  }
+
+  function fillEntry(entry, data, entryId) {
+    const answerEl = entry.querySelector('.answer');
+    answerEl.innerHTML = renderAnswer(data.answer || '', data.sources || [], entryId);
+    if (DECLINED.test(data.answer || '')) {
+      const note = document.createElement('p');
+      note.className = 'declined';
+      note.textContent = "The report doesn't cover this, so the assistant declined to answer rather than make something up.";
+      answerEl.after(note);
+    }
+    fillTrail(entry, data, entryId);
+  }
+
+  function showError(entry, message, question) {
+    entry.querySelector('.answer').innerHTML = `<p class="error">${escapeHtml(message)}</p>`;
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'retry';
+    retry.textContent = 'Ask again';
+    retry.addEventListener('click', () => { entry.remove(); ask(question); });
+    entry.querySelector('.sheet').append(retry);
+    entry.querySelector('.trail').remove();
+  }
+
+  function errorMessage(status, data) {
+    if (data && typeof data.detail === 'string') return data.detail;
+    if (status === 422) return `Questions can be up to ${MAX_CHARS} characters.`;
+    if (status === 504) return 'The server took too long to answer. Please try again.';
+    return `The server couldn't answer (error ${status}). Please try again.`;
+  }
+
+  function setBusy(value) {
+    busy = value;
+    button.disabled = value;
+    button.textContent = value ? 'Asking…' : 'Ask';
+    sampleButtons.forEach((b) => { b.disabled = value; });
+  }
+
+  async function ask(rawQuestion) {
+    const question = rawQuestion.replace(/\s+/g, ' ').trim();
+    if (busy) return;
+    if (!question) { input.focus(); return; }
+    setBusy(true);
+
+    const entryId = `answer-${++entryCount}`;
+    const fragment = template.content.cloneNode(true);
+    const entry = fragment.querySelector('.entry');
+    entry.id = entryId;
+    entry.querySelector('.entry-question').textContent = question;
+    answers.querySelectorAll('.trail[open]').forEach((d) => { d.open = false; });
+    answers.prepend(fragment);
+    entry.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'nearest' });
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 75000);
+    try {
+      const res = await fetch('/api/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question }),
+        signal: controller.signal,
+      });
+      let data = null;
+      try { data = await res.json(); } catch (err) { /* not JSON */ }
+      if (!res.ok || !data) throw new Error(errorMessage(res.status, data));
+      fillEntry(entry, data, entryId);
+      if (statusEl.dataset.state !== 'ready') setStatus('ready', 'Ready');
+    } catch (err) {
+      const message = err.name === 'AbortError'
+        ? 'The server took too long to answer. Please try again.'
+        : err instanceof TypeError
+          ? "Couldn't reach the server. Check your connection and try again."
+          : err.message;
+      showError(entry, message, question);
+    } finally {
+      clearTimeout(timer);
+      setBusy(false);
+    }
+  }
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    ask(input.value);
+  });
+
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      ask(input.value);
+    }
+  });
+
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = `${input.scrollHeight}px`;
+    const length = input.value.length;
+    counter.hidden = length < MAX_CHARS - 100;
+    counter.textContent = `${length}/${MAX_CHARS}`;
+  });
+
+  sampleButtons.forEach((b) => b.addEventListener('click', () => {
+    input.value = b.dataset.question;
+    input.dispatchEvent(new Event('input'));
+    ask(b.dataset.question);
+  }));
+
+  // Passage expand/collapse, and citation links that highlight their passage
+  answers.addEventListener('click', (event) => {
+    const more = event.target.closest('.more');
+    if (more) {
+      const passage = more.closest('.passage');
+      const expanded = passage.classList.toggle('expanded');
+      more.setAttribute('aria-expanded', String(expanded));
+      more.textContent = expanded ? 'Show less' : 'Show the full passage';
+      return;
+    }
+    const cite = event.target.closest('a.cite');
+    if (cite) {
+      event.preventDefault();
+      const entry = cite.closest('.entry');
+      const trail = entry.querySelector('.trail');
+      if (trail) trail.open = true;
+      const passage = entry.querySelector(`#${entry.id}-src-${cite.dataset.source}`);
+      if (passage) {
+        passage.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'center' });
+        passage.classList.add('flash');
+        setTimeout(() => passage.classList.remove('flash'), 1600);
+      }
+    }
+  });
+
+  checkHealth();
+})();
+</script>
+</body>
+</html>
