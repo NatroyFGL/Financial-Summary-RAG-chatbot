@@ -1,0 +1,5 @@
+# Local extras: command-line chatbot with MLflow logging, PDF indexing and a local web server
+-r requirements.txt
+mlflow
+pymupdf
+uvicorn

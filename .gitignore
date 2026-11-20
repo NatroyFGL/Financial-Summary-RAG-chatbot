@@ -1,5 +1,9 @@
 .env
-faiss_index/
 mlruns/
 mlflow.db
 __pycache__/
+.venv/
+venv/
+.vercel/
+# faiss_index/ is committed on purpose: the web demo loads it instead of re-embedding the PDFs.
+# Delete the folder to rebuild it after adding PDFs to papers/.

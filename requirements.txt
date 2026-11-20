@@ -1,0 +1,9 @@
+# RAG pipeline + web demo (this is what Vercel installs)
+fastapi==0.165.0
+langchain-core==1.8.4
+langchain-community==0.4.2
+langchain-openai==1.8.5
+langchain-huggingface==1.2.3
+langchain-text-splitters==1.1.3
+faiss-cpu==1.16.0
+python-dotenv==1.2.4
